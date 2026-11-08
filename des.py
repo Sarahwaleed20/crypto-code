@@ -1,4 +1,3 @@
-
 IP = [
 58,50,42,34,26,18,10,2,60,52,44,36,28,20,12,4,
 62,54,46,38,30,22,14,6,64,56,48,40,32,24,16,8,
@@ -102,44 +101,33 @@ SBOX = [
 ]
 ]
 
+def hex_to_bin(value):
+    return format(int(value, 16), "0{}b".format(len(value) * 4))
 
-def hex_to_bin(hex_string):
-    return bin(int(hex_string, 16))[2:].zfill(len(hex_string) * 4)
-
-
-def bin_to_hex(binary):
-    return hex(int(binary, 2))[2:].upper().zfill(len(binary) // 4)
-
+def bin_to_hex(value):
+    return format(int(value, 2), "0{}X".format(len(value) // 4))
 
 def permute(bits, table):
-    result = ""
-
-    for position in table:
-        result += bits[position - 1]
-
-    return result
+    return "".join(bits[position - 1] for position in table)
 
 
 def xor(a, b):
-    result = ""
-
-    for i in range(len(a)):
-        if a[i] == b[i]:
-            result += "0"
-        else:
-            result += "1"
-
-    return result
+    return "".join(
+        "0" if a[i] == b[i] else "1"
+        for i in range(len(a))
+    )
 
 
 def generate_keys(key):
-    key = hex_to_bin(key)
+    if len(key) != 16:
+        raise ValueError("DES key must contain 16 hexadecimal characters")
 
-    key = permute(key, PC1)
+    key_bits = hex_to_bin(key)
 
-    # Split into C and D
-    C = key[:28]
-    D = key[28:]
+    key_bits = permute(key_bits, PC1)
+
+    C = key_bits[:28]
+    D = key_bits[28:]
 
     round_keys = []
 
@@ -167,39 +155,45 @@ def feistel_function(right, round_key):
     for i in range(8):
         block = result[i * 6:(i + 1) * 6]
 
-        # Row = first and last bits
         row = int(block[0] + block[5], 2)
 
-        # Column = middle four bits
         column = int(block[1:5], 2)
 
         value = SBOX[i][row][column]
 
-        output += bin(value)[2:].zfill(4)
+        output += format(value, "04b")
 
-    output = permute(output, P)
+    return permute(output, P)
 
-    return output
 
 def des(block, key, decrypt=False):
+
+    if len(block) != 16:
+        raise ValueError("DES block must contain 16 hexadecimal characters")
 
     round_keys = generate_keys(key)
 
     if decrypt:
-        round_keys.reverse()
+        round_keys = round_keys[::-1]
 
-    block = hex_to_bin(block)
+    block_bits = hex_to_bin(block)
 
-    block = permute(block, IP)
+    if len(block_bits) != 64:
+        raise ValueError("DES block must contain exactly 64 bits")
 
-    left = block[:32]
-    right = block[32:]
+    block_bits = permute(block_bits, IP)
+
+    left = block_bits[:32]
+    right = block_bits[32:]
 
     for round_key in round_keys:
 
         new_left = right
 
-        new_right = xor(left, feistel_function(right, round_key))
+        new_right = xor(
+            left,
+            feistel_function(right, round_key)
+        )
 
         left = new_left
         right = new_right
@@ -213,19 +207,17 @@ def des(block, key, decrypt=False):
 
 def encrypt(message, key):
 
-    message_hex = message.encode().hex()
+    data = message.encode("utf-8")
 
-    padding_length = 16 - (len(message_hex) % 16)
+    padding_length = 8 - (len(data) % 8)
 
-    if padding_length == 0:
-        padding_length = 16
-
-    message_hex += format(padding_length // 2, "02x") * padding_length
+    data += bytes([padding_length]) * padding_length
 
     ciphertext = ""
 
-    for i in range(0, len(message_hex), 16):
-        block = message_hex[i:i + 16]
+    for i in range(0, len(data), 8):
+
+        block = data[i:i + 8].hex()
 
         ciphertext += des(block, key)
 
@@ -234,17 +226,41 @@ def encrypt(message, key):
 
 def decrypt(ciphertext, key):
 
-    plaintext_hex = ""
+    # Ciphertext must contain complete DES blocks
+    if len(ciphertext) % 16 != 0:
+        raise ValueError("Ciphertext length must be a multiple of 16 hex characters")
+
+    plaintext = b""
 
     for i in range(0, len(ciphertext), 16):
+
         block = ciphertext[i:i + 16]
 
-        plaintext_hex += des(block, key, decrypt=True)
+        decrypted_hex = des(block, key, decrypt=True)
 
-    plaintext = bytes.fromhex(plaintext_hex)
+        plaintext += bytes.fromhex(decrypted_hex)
 
     padding_length = plaintext[-1]
 
+    if padding_length < 1 or padding_length > 8:
+        raise ValueError("Invalid padding")
+
+    if plaintext[-padding_length:] != bytes([padding_length]) * padding_length:
+        raise ValueError("Invalid padding")
+
     plaintext = plaintext[:-padding_length]
 
-    return plaintext.decode()
+    return plaintext.decode("utf-8")
+
+
+if __name__ == "__main__":
+
+    test_key = "133457799BBCDFF1"
+    test_plaintext = "0123456789ABCDEF"
+
+    encrypted = des(test_plaintext, test_key)
+    decrypted = des(encrypted, test_key, decrypt=True)
+
+    print("Test plaintext:", test_plaintext)
+    print("Encrypted:", encrypted)
+    print("Decrypted:", decrypted)
